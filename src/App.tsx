@@ -88,8 +88,7 @@ function SetupRouteGuard() {
   const user = useAuthStore(state => state.user);
   const settings = useSettingsStore(state => state.settings);
 
-  const needsInitialSetup = !isSupabaseConfigured() || !isFirebaseConfigured();
-  if (needsInitialSetup || isAdminUser(user, settings)) {
+  if (isAdminUser(user, settings)) {
     return <PlatformSetup standalone />;
   }
 
