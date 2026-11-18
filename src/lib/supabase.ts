@@ -179,44 +179,51 @@ class LocalQueryBuilder implements PromiseLike<QueryResult> {
   }
 
   private async execute(): Promise<QueryResult> {
-    try {
-      const res = await fetch('/api/db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          table: this.table,
-          action: this.action,
-          payload: this.payload,
-          onConflict: this.onConflictCol,
-          filters: this.filters,
-          orders: this.orders,
-          limit: this.limitVal,
-          range: this.rangeVal,
-          single: this.isSingle,
-          maybeSingle: this.isMaybeSingle,
-          head: this.isHead,
-        }),
-      });
-      if (!res.ok) {
+    const requestBody = JSON.stringify({
+      table: this.table,
+      action: this.action,
+      payload: this.payload,
+      onConflict: this.onConflictCol,
+      filters: this.filters,
+      orders: this.orders,
+      limit: this.limitVal,
+      range: this.rangeVal,
+      single: this.isSingle,
+      maybeSingle: this.isMaybeSingle,
+      head: this.isHead,
+    });
+
+    const endpoints = ['/api/db', '/db-api.php'];
+    let lastError = 'Local DB request failed';
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: requestBody,
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) {
+          lastError = `Database HTTP ${res.status} (${endpoint})`;
+          continue;
+        }
+        const json = await res.json();
         return {
-          data: this.isSingle || this.isMaybeSingle || this.isHead ? null : [],
-          error: { message: `Database HTTP ${res.status}` },
-          count: 0,
+          data: json.data ?? (this.isSingle || this.isMaybeSingle || this.isHead ? null : []),
+          error: json.error ?? null,
+          count: typeof json.count === 'number' ? json.count : null,
         };
+      } catch (err: any) {
+        lastError = err?.message || lastError;
       }
-      const json = await res.json();
-      return {
-        data: json.data ?? (this.isSingle || this.isMaybeSingle || this.isHead ? null : []),
-        error: json.error ?? null,
-        count: typeof json.count === 'number' ? json.count : null,
-      };
-    } catch (err: any) {
-      return {
-        data: this.isSingle || this.isMaybeSingle || this.isHead ? null : [],
-        error: { message: err?.message || 'Local DB request failed' },
-        count: 0,
-      };
     }
+
+    return {
+      data: this.isSingle || this.isMaybeSingle || this.isHead ? null : [],
+      error: { message: lastError },
+      count: 0,
+    };
   }
 
   then<TResult1 = QueryResult, TResult2 = never>(

@@ -11,7 +11,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 $dataDir = __DIR__ . '/app_data';
 if (!is_dir($dataDir)) {
-    @mkdir($dataDir, 0755, true);
+    @mkdir($dataDir, 0775, true);
+}
+if (!is_writable($dataDir)) {
+    @chmod($dataDir, 0777);
+}
+if (!is_writable($dataDir)) {
+    $dataDir = rtrim(sys_get_temp_dir(), '/\\') . '/streamhub_app_data';
+    if (!is_dir($dataDir)) {
+        @mkdir($dataDir, 0775, true);
+    }
 }
 
 // Protect app_data directory from direct web access
