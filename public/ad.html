@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ad</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: transparent;
+      overflow: hidden;
+      width: 100vw;
+    }
+  </style>
+  <script>
+    function reportHeight() {
+      const body = document.body;
+      let finalHeight = 0;
+      for (let i = 0; i < body.children.length; i++) {
+        const el = body.children[i];
+        if (el.tagName !== 'SCRIPT' && el.tagName !== 'STYLE' && el.tagName !== 'NOSCRIPT') {
+          const rect = el.getBoundingClientRect();
+          const computedStyle = window.getComputedStyle(el);
+          if (computedStyle.position !== 'fixed' && computedStyle.position !== 'absolute') {
+            if (rect.bottom > finalHeight) finalHeight = rect.bottom;
+          }
+        }
+      }
+      if (finalHeight === 0) {
+        finalHeight = document.documentElement.scrollHeight || document.body.scrollHeight;
+      }
+      if (finalHeight > 0) {
+        const params = new URLSearchParams(window.location.search);
+        const placement = params.get('p');
+        window.parent.postMessage({ type: 'ad-resize', height: finalHeight, placement: placement }, '*');
+      }
+    }
+
+    window.addEventListener('load', reportHeight);
+    
+    // Continuous observer for dynamic ad networks like Adsterra native banners
+    if (typeof ResizeObserver !== 'undefined') {
+      const resizeObserver = new ResizeObserver(() => {
+        reportHeight();
+      });
+      document.addEventListener('DOMContentLoaded', () => {
+        resizeObserver.observe(document.body);
+      });
+    }
+
+    // Polling fallback to catch delayed script injections
+    [300, 700, 1500, 3000, 5000].forEach(delay => {
+      setTimeout(reportHeight, delay);
+    });
+    
+    let adRendered = false;
+    function renderAdContent(adHtml) {
+      if (!adHtml || adRendered) return;
+      adRendered = true;
+      try {
+        const container = document.getElementById('ad-container') || document.body;
+        const range = document.createRange();
+        range.selectNode(container);
+        const fragment = range.createContextualFragment(adHtml);
+        container.appendChild(fragment);
+        setTimeout(reportHeight, 200);
+        setTimeout(reportHeight, 800);
+        setTimeout(reportHeight, 2000);
+      } catch (err) {
+        console.error('Render ad fragment error:', err);
+      }
+    }
+
+    // Listen for parent postMessage
+    window.addEventListener('message', function(event) {
+      if (event.data && event.data.type === 'render-ad' && event.data.adHtml) {
+        renderAdContent(event.data.adHtml);
+      }
+    });
+
+    // Inject the ad from localStorage immediately if available
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const placement = params.get('p');
+      if (placement) {
+        const settingsStr = window.localStorage.getItem('site_custom_ads');
+        if (settingsStr) {
+          const customAds = JSON.parse(settingsStr);
+          const adHtml = customAds[placement];
+          if (adHtml) {
+            adRendered = true;
+            document.write(adHtml);
+          }
+        }
+      }
+    } catch(e) {
+      console.error('Ad Error:', e);
+    }
+  </script>
+</head>
+<body>
+  <div id="ad-container"></div>
+</body>
+</html>

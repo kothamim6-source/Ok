@@ -1,0 +1,290 @@
+import React, { useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
+import { auth } from '../../lib/firebase';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { UserPlus, User, Mail, Lock, ArrowRight, Loader2, Phone } from 'lucide-react';
+import { useSettingsStore } from '../../store/settingsStore';
+import { getConfiguredAdminEmail } from '../../lib/adminConfig';
+
+export function Register() {
+  const { settings } = useSettingsStore();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError('');
+    
+    try {
+      const lowerName = name.trim().toLowerCase();
+      if (!lowerName || lowerName === 'user' || lowerName === 'admin' || lowerName.includes('user') || lowerName.includes('admin')) {
+        throw new Error('দয়া করে আপনার আসল নাম ব্যবহার করুন। "User" বা "Admin" নাম হিসেবে ব্যবহার করা যাবে না।');
+      }
+
+      if (!auth) throw new Error('Firebase Auth is not initialized');
+
+      const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
+      if (!cleanPhone) {
+        throw new Error('মোবাইল নাম্বার দেওয়া আবশ্যক। নম্বর ছাড়া অ্যাকাউন্ট তৈরি করা যাবে না।');
+      }
+      
+      const bdPhoneRegex = /^(?:\+?88)?01[3-9]\d{8}$/;
+      if (!bdPhoneRegex.test(cleanPhone)) {
+        throw new Error('দয়া করে সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)। নম্বর ছাড়া অ্যাকাউন্ট তৈরি করা যাবে না।');
+      }
+
+      if (typeof window !== 'undefined' && cleanPhone) {
+        localStorage.setItem(`verified_phone_${email.trim().toLowerCase()}`, cleanPhone);
+      }
+
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      if (typeof window !== 'undefined' && cleanPhone) {
+        localStorage.setItem(`verified_phone_${user.uid}`, cleanPhone);
+        localStorage.setItem(`verified_phone_${email.trim().toLowerCase()}`, cleanPhone);
+      }
+      
+      await updateProfile(user, {
+        displayName: name.trim()
+      });
+
+      const configuredAdminEmail = getConfiguredAdminEmail(settings);
+      let isAdmin = Boolean(configuredAdminEmail && email.trim().toLowerCase() === configuredAdminEmail);
+      if (!isAdmin) {
+        try {
+          const { count } = await supabase
+            .from('users')
+            .select('id', { count: 'exact', head: true })
+            .eq('role', 'admin');
+          if (count === 0) {
+            isAdmin = true;
+          }
+        } catch (err) {}
+      }
+      // Upsert user in Supabase with verified phone number immediately
+      const { error: insertError } = await supabase.from('users').upsert([{
+        id: user.uid,
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        phone: cleanPhone,
+        role: isAdmin ? 'admin' : 'user',
+        status: 'active',
+        created_at: Date.now()
+      }]);
+      if (insertError) {
+        console.error("Error creating user profile", insertError);
+      }
+
+      // Handle Referral Code
+      const refCode = searchParams.get('ref');
+      const refEnabled = settings?.referralSettings?.enabled ?? true;
+      const hasDeviceRegistered = localStorage.getItem('device_used_for_referral');
+      
+      if (refCode && refEnabled && !hasDeviceRegistered) {
+        try {
+          const referrerReward = settings?.referralSettings?.referrerReward ?? 50;
+          const refereeReward = settings?.referralSettings?.refereeReward ?? 20;
+          
+          const { data: referrers } = await supabase
+             .from('users')
+             .select('*')
+             .eq('referral_code', refCode);
+          
+          if (referrers && referrers.length > 0) {
+            const referrerDoc = referrers[0];
+            const referrerId = referrerDoc.id;
+            
+            // Add points to referrer
+            const currentPoints = referrerDoc.points || 0;
+            await supabase.from('users').update({ points: currentPoints + referrerReward }).eq('id', referrerId);
+            
+            // Give the new user bonus points
+            await supabase.from('users').update({ points: refereeReward }).eq('id', user.uid);
+            
+            // Mark this device as used for referral
+            localStorage.setItem('device_used_for_referral', 'true');
+          }
+        } catch (refError) {
+          console.error("Error processing referral:", refError);
+        }
+      }
+      navigate('/');
+    } catch (err: any) {
+      setError(err.message || 'Failed to register. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-[85vh] flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+      {/* Background glow effects for premium adult look */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-red-900/20 rounded-full blur-[150px] pointer-events-none"></div>
+      <div className="absolute top-0 right-0 w-72 h-72 bg-red-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+      <div className="absolute bottom-0 left-0 w-72 h-72 bg-yellow-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+      
+      <div className="w-full max-w-md relative z-10 animate-in fade-in zoom-in-95 duration-500">
+        <div className="rounded-3xl border border-white/10 bg-[#0a0a0a]/80 p-8 sm:p-10 backdrop-blur-2xl shadow-[0_0_50px_rgba(220,38,38,0.15)] relative overflow-hidden">
+          
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-900 via-red-600 to-red-900"></div>
+
+          <div className="mb-8 text-center">
+            {/* 18+ Warning Badge */}
+            <div className="inline-block mb-4 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-black tracking-widest shadow-[0_0_15px_rgba(220,38,38,0.2)]">
+              WARNING: 18+ ADULT CONTENT
+            </div>
+
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-red-600 to-red-900 shadow-lg shadow-red-600/30 ring-4 ring-red-500/10">
+              <UserPlus className="h-8 w-8 text-white" />
+            </div>
+            <h2 className="text-3xl font-black tracking-tight text-white mb-2">
+              অ্যাকাউন্ট তৈরি করুন
+            </h2>
+            <p className="text-sm text-gray-400">
+              প্রিমিয়াম সুবিধা পেতে আমাদের সাথে যুক্ত হোন
+            </p>
+          </div>
+          
+          <form className="space-y-6" onSubmit={handleRegister}>
+            {error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm font-medium text-red-500 flex items-start gap-3">
+                <div className="mt-0.5">•</div>
+                <p>{error}</p>
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300" htmlFor="name">
+                  পুরো নাম
+                </label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-500">
+                    <User className="h-5 w-5" />
+                  </div>
+                  <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    required
+                    className="block w-full rounded-xl border border-white/10 bg-white/5 py-3.5 pl-12 pr-4 text-white placeholder-gray-500 transition-all focus:border-red-500 focus:bg-black/50 focus:outline-none focus:ring-1 focus:ring-red-500"
+                    placeholder="আপনার পুরো নাম লিখুন"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300" htmlFor="email-address">
+                  ইমেইল অ্যাড্রেস
+                </label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-500">
+                    <Mail className="h-5 w-5" />
+                  </div>
+                  <input
+                    id="email-address"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    className="block w-full rounded-xl border border-white/10 bg-white/5 py-3.5 pl-12 pr-4 text-white placeholder-gray-500 transition-all focus:border-red-500 focus:bg-black/50 focus:outline-none focus:ring-1 focus:ring-red-500"
+                    placeholder="আপনার ইমেইল লিখুন"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-bold text-gray-300" htmlFor="phone">
+                    মোবাইল নাম্বার <span className="text-red-500">*</span>
+                  </label>
+                  <span className="text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                    সঠিক নম্বর দিন, কোড পাঠানো হবে
+                  </span>
+                </div>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-500">
+                    <Phone className="h-5 w-5" />
+                  </div>
+                  <input
+                    id="phone"
+                    name="phone"
+                    type="tel"
+                    required
+                    className="block w-full rounded-xl border border-white/10 bg-white/5 py-3.5 pl-12 pr-4 text-white placeholder-gray-500 transition-all focus:border-red-500 focus:bg-black/50 focus:outline-none focus:ring-1 focus:ring-red-500"
+                    placeholder="01XXXXXXXXX"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-zinc-400">
+                  সঠিক নম্বর দিন, কোড পাঠানো হবে। নম্বর ছাড়া অ্যাকাউন্ট সচল হবে না।
+                </p>
+              </div>
+              
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300" htmlFor="password">
+                  Password
+                </label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-500">
+                    <Lock className="h-5 w-5" />
+                  </div>
+                  <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    className="block w-full rounded-xl border border-white/10 bg-white/5 py-3.5 pl-12 pr-4 text-white placeholder-gray-500 transition-all focus:border-red-500 focus:bg-black/50 focus:outline-none focus:ring-1 focus:ring-red-500"
+                    placeholder="পাসওয়ার্ড তৈরি করুন"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="group relative flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-red-700 px-4 py-4 text-sm font-bold text-white shadow-lg shadow-red-600/25 transition-all hover:from-red-500 hover:to-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-black disabled:opacity-50 disabled:hover:scale-100"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Creating account...
+                </>
+              ) : (
+                <>
+                  অ্যাকাউন্ট তৈরি করুন
+                  <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+                </>
+              )}
+            </button>
+          </form>
+          
+          <div className="mt-8 text-center text-sm">
+            <span className="text-gray-400">আগে থেকেই অ্যাকাউন্ট আছে? </span>
+            <Link to="/login" className="font-bold text-red-500 transition-colors hover:text-red-400">
+              Sign in
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
