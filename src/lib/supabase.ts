@@ -81,8 +81,18 @@ const unconfiguredFetch: typeof fetch = async (input, init) => {
   });
 };
 
+const resilientFetch: typeof fetch = async (input, init) => {
+  try {
+    return await fetch(input, init);
+  } catch {
+    return unconfiguredFetch(input, init);
+  }
+};
+
 export const supabase = isSupabaseConfigured()
-  ? createClient(resolvedUrl, resolvedKey)
+  ? createClient(resolvedUrl, resolvedKey, {
+      global: { fetch: resilientFetch }
+    })
   : createClient(resolvedUrl, resolvedKey, {
       global: { fetch: unconfiguredFetch },
       auth: { persistSession: false, autoRefreshToken: false }

@@ -1262,6 +1262,10 @@ async function startServer() {
             .lte('created_at', now);
             
           if (error) {
+            const msg = String(error.message || '') + String((error as any).details || '');
+            if (msg.includes('fetch failed') || msg.includes('ENOTFOUND')) {
+              return;
+            }
             console.error('Error fetching scheduled videos:', error);
             return;
           }
