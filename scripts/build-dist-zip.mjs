@@ -53,7 +53,7 @@ if (fs.existsSync(htaccessPath) && !zip.getEntry('.htaccess')) {
 }
 
 // Ensure PHP helper scripts are in zip if present
-const phpFiles = ['cron.php', 'proxy.php', 'telegram-post.php', 'scrape-blogger.php', 'adsterra-stats.php'];
+const phpFiles = ['db-api.php', 'cron.php', 'proxy.php', 'telegram-post.php', 'scrape-blogger.php', 'adsterra-stats.php'];
 for (const file of phpFiles) {
   const filePath = path.join(publicPath, file);
   if (fs.existsSync(filePath) && !zip.getEntry(file)) {

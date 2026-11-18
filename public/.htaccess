@@ -15,7 +15,8 @@ DirectoryIndex index.html
   # Prevent looping on index.html
   RewriteRule ^index\.html$ - [L]
 
-  # Direct API routes to PHP scripts on InfinityFree / Apache
+  # Direct API routes to PHP scripts on cPanel / Apache
+  RewriteRule ^api/db/?$ db-api.php [L,QSA]
   RewriteRule ^api/scrape-blogger/?$ scrape-blogger.php [L,QSA]
   RewriteRule ^api/telegram/post/?$ telegram-post.php [L,QSA]
   RewriteRule ^api/telegram-post/?$ telegram-post.php [L,QSA]

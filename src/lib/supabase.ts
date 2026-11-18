@@ -1,109 +1,246 @@
-import { createClient } from '@supabase/supabase-js';
-
 export interface BuyerSupabaseConfig {
   url: string;
   anonKey: string;
 }
 
-const STORAGE_KEY = 'buyer_supabase_config';
-const PLACEHOLDER_URL = 'https://your-project.supabase.co';
-const PLACEHOLDER_KEY = 'your-anon-key';
-
-function getStoredSupabaseConfig(): Partial<BuyerSupabaseConfig> {
-  if (typeof window === 'undefined') return {};
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) || {};
-  } catch {
-    return {};
-  }
-}
-
-const stored = getStoredSupabaseConfig();
-const envUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
-
-const resolvedUrl = (stored.url || envUrl || PLACEHOLDER_URL).trim();
-const resolvedKey = (stored.anonKey || envKey || PLACEHOLDER_KEY).trim();
-
 export function isSupabaseConfigured(): boolean {
-  return (
-    Boolean(resolvedUrl) &&
-    resolvedUrl !== PLACEHOLDER_URL &&
-    resolvedUrl.startsWith('https://') &&
-    Boolean(resolvedKey) &&
-    resolvedKey !== PLACEHOLDER_KEY
-  );
+  return true;
 }
 
 export function getSupabaseConfigInfo(): { url: string; anonKey: string; source: 'local' | 'env' | 'unset' } {
-  if (stored.url && stored.anonKey) {
-    return { url: stored.url, anonKey: stored.anonKey, source: 'local' };
-  }
-  if (envUrl && envKey) {
-    return { url: envUrl, anonKey: envKey, source: 'env' };
-  }
-  return { url: '', anonKey: '', source: 'unset' };
+  return {
+    url: '/api/db (Self-Hosted Local Database)',
+    anonKey: 'local',
+    source: 'local',
+  };
 }
 
-export function saveBuyerSupabaseConfig(url: string, anonKey: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ url: url.trim(), anonKey: anonKey.trim() }));
+export function saveBuyerSupabaseConfig(_url: string, _anonKey: string): void {
+  // No-op: using self-hosted local database
 }
 
 export function clearBuyerSupabaseConfig(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_KEY);
+  // No-op: using self-hosted local database
 }
 
-const unconfiguredFetch: typeof fetch = async (input, init) => {
-  const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-  const headers = new Headers(
-    init?.headers || (input instanceof Request ? input.headers : undefined)
-  );
-  const accept = headers.get('Accept') || '';
+interface FilterItem {
+  col: string;
+  op: string;
+  val: any;
+}
 
-  if (method === 'HEAD') {
-    return new Response(null, {
-      status: 200,
-      headers: { 'Content-Range': '*/0' }
-    });
+interface OrderItem {
+  col: string;
+  ascending: boolean;
+}
+
+interface QueryResult<T = any> {
+  data: T;
+  error: any;
+  count?: number | null;
+}
+
+class LocalQueryBuilder implements PromiseLike<QueryResult> {
+  private table: string;
+  private action: 'select' | 'insert' | 'upsert' | 'update' | 'delete' = 'select';
+  private payload: any = null;
+  private onConflictCol?: string;
+  private filters: FilterItem[] = [];
+  private orders: OrderItem[] = [];
+  private limitVal?: number;
+  private rangeVal?: [number, number];
+  private isSingle = false;
+  private isMaybeSingle = false;
+  private isHead = false;
+
+  constructor(table: string) {
+    this.table = table;
   }
 
-  const wantsSingleObject = accept.includes('application/vnd.pgrst.object+json');
-  return new Response(wantsSingleObject ? 'null' : '[]', {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Range': wantsSingleObject ? '0-0/0' : '*/0'
+  select(_columns?: string, options?: { count?: 'exact' | 'planned' | 'estimated'; head?: boolean }) {
+    if (this.action === 'select') {
+      this.action = 'select';
     }
-  });
-};
-
-const resilientFetch: typeof fetch = async (input, init) => {
-  try {
-    return await fetch(input, init);
-  } catch {
-    return unconfiguredFetch(input, init);
+    if (options?.head) {
+      this.isHead = true;
+    }
+    return this;
   }
+
+  insert(values: any) {
+    this.action = 'insert';
+    this.payload = values;
+    return this;
+  }
+
+  upsert(values: any, options?: { onConflict?: string }) {
+    this.action = 'upsert';
+    this.payload = values;
+    if (options?.onConflict) {
+      this.onConflictCol = options.onConflict;
+    }
+    return this;
+  }
+
+  update(values: any) {
+    this.action = 'update';
+    this.payload = values;
+    return this;
+  }
+
+  delete() {
+    this.action = 'delete';
+    return this;
+  }
+
+  eq(col: string, val: any) {
+    this.filters.push({ col, op: 'eq', val });
+    return this;
+  }
+
+  neq(col: string, val: any) {
+    this.filters.push({ col, op: 'neq', val });
+    return this;
+  }
+
+  gt(col: string, val: any) {
+    this.filters.push({ col, op: 'gt', val });
+    return this;
+  }
+
+  gte(col: string, val: any) {
+    this.filters.push({ col, op: 'gte', val });
+    return this;
+  }
+
+  lt(col: string, val: any) {
+    this.filters.push({ col, op: 'lt', val });
+    return this;
+  }
+
+  lte(col: string, val: any) {
+    this.filters.push({ col, op: 'lte', val });
+    return this;
+  }
+
+  is(col: string, val: any) {
+    this.filters.push({ col, op: 'is', val });
+    return this;
+  }
+
+  in(col: string, val: any[]) {
+    this.filters.push({ col, op: 'in', val });
+    return this;
+  }
+
+  like(col: string, val: string) {
+    this.filters.push({ col, op: 'like', val });
+    return this;
+  }
+
+  ilike(col: string, val: string) {
+    this.filters.push({ col, op: 'ilike', val });
+    return this;
+  }
+
+  contains(col: string, val: any) {
+    this.filters.push({ col, op: 'contains', val });
+    return this;
+  }
+
+  or(expr: string) {
+    this.filters.push({ col: '', op: 'or', val: expr });
+    return this;
+  }
+
+  order(col: string, options?: { ascending?: boolean }) {
+    this.orders.push({ col, ascending: options?.ascending !== false });
+    return this;
+  }
+
+  limit(n: number) {
+    this.limitVal = n;
+    return this;
+  }
+
+  range(from: number, to: number) {
+    this.rangeVal = [from, to];
+    return this;
+  }
+
+  single() {
+    this.isSingle = true;
+    return this;
+  }
+
+  maybeSingle() {
+    this.isMaybeSingle = true;
+    return this;
+  }
+
+  private async execute(): Promise<QueryResult> {
+    try {
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          table: this.table,
+          action: this.action,
+          payload: this.payload,
+          onConflict: this.onConflictCol,
+          filters: this.filters,
+          orders: this.orders,
+          limit: this.limitVal,
+          range: this.rangeVal,
+          single: this.isSingle,
+          maybeSingle: this.isMaybeSingle,
+          head: this.isHead,
+        }),
+      });
+      if (!res.ok) {
+        return {
+          data: this.isSingle || this.isMaybeSingle || this.isHead ? null : [],
+          error: { message: `Database HTTP ${res.status}` },
+          count: 0,
+        };
+      }
+      const json = await res.json();
+      return {
+        data: json.data ?? (this.isSingle || this.isMaybeSingle || this.isHead ? null : []),
+        error: json.error ?? null,
+        count: typeof json.count === 'number' ? json.count : null,
+      };
+    } catch (err: any) {
+      return {
+        data: this.isSingle || this.isMaybeSingle || this.isHead ? null : [],
+        error: { message: err?.message || 'Local DB request failed' },
+        count: 0,
+      };
+    }
+  }
+
+  then<TResult1 = QueryResult, TResult2 = never>(
+    onfulfilled?: ((value: QueryResult) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
+  ): Promise<TResult1 | TResult2> {
+    return this.execute().then(onfulfilled, onrejected);
+  }
+}
+
+const noopChannel = {
+  on: () => noopChannel,
+  subscribe: () => noopChannel,
+  unsubscribe: async () => 'ok',
 };
 
-export const supabase = isSupabaseConfigured()
-  ? createClient(resolvedUrl, resolvedKey, {
-      global: { fetch: resilientFetch }
-    })
-  : createClient(resolvedUrl, resolvedKey, {
-      global: { fetch: unconfiguredFetch },
-      auth: { persistSession: false, autoRefreshToken: false }
-    });
-
-if (!isSupabaseConfigured()) {
-  const noopChannel = {
-    on: () => noopChannel,
-    subscribe: () => noopChannel,
-    unsubscribe: async () => 'ok'
-  } as any;
-  (supabase as any).channel = () => noopChannel;
-  (supabase as any).removeChannel = async () => 'ok';
-}
+export const supabase: any = {
+  from: (table: string) => new LocalQueryBuilder(table),
+  rpc: async (_fn: string, _params?: any) => ({ data: null, error: null }),
+  channel: (_name: string) => noopChannel,
+  removeChannel: async (_ch: any) => 'ok',
+  auth: {
+    getSession: async () => ({ data: { session: null }, error: null }),
+    getUser: async () => ({ data: { user: null }, error: null }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+  },
+};

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import fs from "fs";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import * as cheerio from "cheerio";
@@ -71,7 +72,181 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
+
+  // Self-Hosted Local Database API (matches public/db-api.php for cPanel)
+  const localDataDir = path.resolve('app_data');
+  if (!fs.existsSync(localDataDir)) {
+    fs.mkdirSync(localDataDir, { recursive: true });
+  }
+
+  const readLocalTable = (table: string): any[] => {
+    const fp = path.join(localDataDir, `${table}.json`);
+    if (!fs.existsSync(fp)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const writeLocalTable = (table: string, rows: any[]) => {
+    const fp = path.join(localDataDir, `${table}.json`);
+    fs.writeFileSync(fp, JSON.stringify(rows), 'utf8');
+  };
+
+  const matchesLocalFilter = (row: any, f: { col: string; op: string; val: any }): boolean => {
+    const rowVal = row?.[f.col] ?? null;
+    const val = f.val;
+    switch (f.op) {
+      case 'eq': return rowVal == val;
+      case 'neq': return rowVal != val;
+      case 'gt': return rowVal > val;
+      case 'gte': return rowVal >= val;
+      case 'lt': return rowVal < val;
+      case 'lte': return rowVal <= val;
+      case 'is': return val === null ? rowVal === null : rowVal === val;
+      case 'in': return Array.isArray(val) && val.some((v) => v == rowVal);
+      case 'like':
+      case 'ilike': {
+        const pattern = String(val ?? '').replace(/%/g, '').toLowerCase();
+        if (!pattern) return true;
+        return String(rowVal ?? '').toLowerCase().includes(pattern);
+      }
+      case 'contains': {
+        if (Array.isArray(rowVal) && Array.isArray(val)) {
+          return val.every((v) => rowVal.some((rv) => rv == v));
+        }
+        return JSON.stringify(rowVal ?? '').toLowerCase().includes(JSON.stringify(val ?? '').toLowerCase());
+      }
+      case 'or': {
+        const parts = String(val ?? '').split(',');
+        return parts.some((part) => {
+          const idx1 = part.indexOf('.');
+          const idx2 = part.indexOf('.', idx1 + 1);
+          if (idx1 === -1 || idx2 === -1) return false;
+          const col = part.slice(0, idx1).trim();
+          const op = part.slice(idx1 + 1, idx2).trim();
+          const v = part.slice(idx2 + 1).trim();
+          return matchesLocalFilter(row, { col, op, val: v });
+        });
+      }
+      default: return true;
+    }
+  };
+
+  app.post('/api/db', (req, res) => {
+    try {
+      const { table: rawTable, action, payload, onConflict, filters = [], orders = [], limit, range, single, maybeSingle, head } = req.body || {};
+      const table = String(rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
+      if (!table || !action) {
+        return res.status(400).json({ data: null, error: { message: 'Invalid database request' } });
+      }
+
+      let rows = readLocalTable(table);
+
+      if (action === 'select') {
+        let filtered = Array.isArray(filters) && filters.length > 0
+          ? rows.filter((r) => filters.every((f: any) => matchesLocalFilter(r, f)))
+          : [...rows];
+        const totalCount = filtered.length;
+
+        if (Array.isArray(orders) && orders.length > 0) {
+          filtered.sort((a, b) => {
+            for (const ord of orders) {
+              const va = a?.[ord.col] ?? null;
+              const vb = b?.[ord.col] ?? null;
+              if (va == vb) continue;
+              const cmp = va < vb ? -1 : 1;
+              return ord.ascending === false ? -cmp : cmp;
+            }
+            return 0;
+          });
+        }
+
+        if (Array.isArray(range) && range.length === 2) {
+          const from = Math.max(0, Number(range[0]) || 0);
+          const to = Math.max(from, Number(range[1]) || 0);
+          filtered = filtered.slice(from, to + 1);
+        } else if (typeof limit === 'number' && limit >= 0) {
+          filtered = filtered.slice(0, limit);
+        }
+
+        if (head) return res.json({ data: null, count: totalCount, error: null });
+        if (single || maybeSingle) return res.json({ data: filtered[0] ?? null, count: totalCount, error: null });
+        return res.json({ data: filtered, count: totalCount, error: null });
+      }
+
+      if (action === 'insert') {
+        const items = Array.isArray(payload) ? payload : [payload];
+        const inserted: any[] = [];
+        for (const item of items) {
+          if (!item || typeof item !== 'object') continue;
+          const record = { ...item };
+          if (!record.id) record.id = `${table}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          rows.push(record);
+          inserted.push(record);
+        }
+        writeLocalTable(table, rows);
+        return res.json({ data: single || maybeSingle ? (inserted[0] ?? null) : inserted, error: null });
+      }
+
+      if (action === 'upsert') {
+        const conflictKey = onConflict || 'id';
+        const items = Array.isArray(payload) ? payload : [payload];
+        const upserted: any[] = [];
+        for (const item of items) {
+          if (!item || typeof item !== 'object') continue;
+          const record = { ...item };
+          if (!record.id) record.id = `${table}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          const idx = record[conflictKey] !== undefined
+            ? rows.findIndex((r) => r?.[conflictKey] == record[conflictKey])
+            : -1;
+          if (idx >= 0) {
+            rows[idx] = { ...rows[idx], ...record };
+            upserted.push(rows[idx]);
+          } else {
+            rows.push(record);
+            upserted.push(record);
+          }
+        }
+        writeLocalTable(table, rows);
+        return res.json({ data: single || maybeSingle ? (upserted[0] ?? null) : upserted, error: null });
+      }
+
+      if (action === 'update') {
+        const updated: any[] = [];
+        rows = rows.map((r) => {
+          const match = !Array.isArray(filters) || filters.every((f: any) => matchesLocalFilter(r, f));
+          if (match) {
+            const next = { ...r, ...(payload || {}) };
+            updated.push(next);
+            return next;
+          }
+          return r;
+        });
+        writeLocalTable(table, rows);
+        return res.json({ data: single || maybeSingle ? (updated[0] ?? null) : updated, error: null });
+      }
+
+      if (action === 'delete') {
+        const deleted: any[] = [];
+        const remaining: any[] = [];
+        for (const r of rows) {
+          const match = !Array.isArray(filters) || filters.every((f: any) => matchesLocalFilter(r, f));
+          if (match) deleted.push(r);
+          else remaining.push(r);
+        }
+        writeLocalTable(table, remaining);
+        return res.json({ data: deleted, error: null });
+      }
+
+      return res.status(400).json({ data: null, error: { message: 'Unknown action' } });
+    } catch (err: any) {
+      return res.status(500).json({ data: null, error: { message: err?.message || 'Internal DB error' } });
+    }
+  });
 
   // API routes
   app.get("/api/env", (req, res) => res.json(Object.keys(process.env)));
