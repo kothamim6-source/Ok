@@ -9,7 +9,7 @@ export function getConfiguredAdminEmail(settings?: SiteSettings | null): string 
   const fromEnv = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase();
   if (fromEnv) return fromEnv;
 
-  return '';
+  return 'kothamim6@gmail.com';
 }
 
 export function isAdminUser(user?: User | null, settings?: SiteSettings | null): boolean {

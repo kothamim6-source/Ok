@@ -19,6 +19,7 @@ import {
   Server
 } from 'lucide-react';
 import { AdminBackgroundTasks } from '../admin/AdminBackgroundTasks';
+import { isAdminUser } from '../../lib/adminConfig';
 
 export function AdminLayout() {
   const { user, isLoading } = useAuthStore();
@@ -71,7 +72,11 @@ export function AdminLayout() {
     );
   }
 
-  if (!user || (user.role !== 'admin' && user.role !== 'moderator')) {
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!isAdminUser(user, settings) && user.role !== 'moderator') {
     return <Navigate to="/" replace />;
   }
 

@@ -3,6 +3,7 @@ import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
+import appletFirebaseConfig from '../../firebase-applet-config.json';
 
 export interface BuyerFirebaseConfig {
   apiKey: string;
@@ -12,6 +13,7 @@ export interface BuyerFirebaseConfig {
   messagingSenderId: string;
   appId: string;
   measurementId?: string;
+  firestoreDatabaseId?: string;
 }
 
 const STORAGE_KEY = 'buyer_firebase_config';
@@ -28,15 +30,17 @@ function getStoredFirebaseConfig(): Partial<BuyerFirebaseConfig> {
 }
 
 const stored = getStoredFirebaseConfig();
+const provisioned = (appletFirebaseConfig || {}) as Partial<BuyerFirebaseConfig>;
 
 const firebaseConfig: BuyerFirebaseConfig = {
-  apiKey: (stored.apiKey || import.meta.env.VITE_FIREBASE_API_KEY || '').trim(),
-  authDomain: (stored.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '').trim(),
-  projectId: (stored.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || '').trim(),
-  storageBucket: (stored.storageBucket || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '').trim(),
-  messagingSenderId: (stored.messagingSenderId || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '').trim(),
-  appId: (stored.appId || import.meta.env.VITE_FIREBASE_APP_ID || '').trim(),
-  measurementId: (stored.measurementId || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '').trim()
+  apiKey: (stored.apiKey || import.meta.env.VITE_FIREBASE_API_KEY || provisioned.apiKey || '').trim(),
+  authDomain: (stored.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || provisioned.authDomain || '').trim(),
+  projectId: (stored.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || provisioned.projectId || '').trim(),
+  storageBucket: (stored.storageBucket || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || provisioned.storageBucket || '').trim(),
+  messagingSenderId: (stored.messagingSenderId || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || provisioned.messagingSenderId || '').trim(),
+  appId: (stored.appId || import.meta.env.VITE_FIREBASE_APP_ID || provisioned.appId || '').trim(),
+  measurementId: (stored.measurementId || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || provisioned.measurementId || '').trim(),
+  firestoreDatabaseId: (stored.firestoreDatabaseId || provisioned.firestoreDatabaseId || '').trim()
 };
 
 export function isFirebaseConfigured(): boolean {
@@ -49,7 +53,10 @@ export function isFirebaseConfigured(): boolean {
 
 export function getFirebaseConfigInfo(): { config: BuyerFirebaseConfig; source: 'local' | 'env' | 'unset' } {
   const hasStored = Boolean(stored.apiKey && stored.projectId);
-  const hasEnv = Boolean(import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_PROJECT_ID);
+  const hasEnv = Boolean(
+    (import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_PROJECT_ID) ||
+    (provisioned.apiKey && provisioned.projectId)
+  );
   return {
     config: firebaseConfig,
     source: hasStored ? 'local' : hasEnv ? 'env' : 'unset'
@@ -75,7 +82,9 @@ if (isFirebaseConfigured()) {
   try {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-    db = getFirestore(app);
+    db = firebaseConfig.firestoreDatabaseId
+      ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+      : getFirestore(app);
     storage = getStorage(app);
   } catch (error) {
     console.error("Firebase initialization error. Please check your configuration.", error);

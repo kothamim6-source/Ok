@@ -740,12 +740,6 @@ export default function App() {
       <AdultWarningModal />
       <WelcomeNoticeModal />
       <TelegramLauncherModal />
-      {Boolean(
-        user &&
-        user.role !== 'admin' &&
-        user.role !== 'moderator' &&
-        (!user.phone || user.phone.trim().length < 10)
-      ) && <PhoneNumberPrompt />}
       <GlobalAds />
       <OnlineTracker />
       <Routes>

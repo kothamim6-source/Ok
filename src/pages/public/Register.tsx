@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { auth } from '../../lib/firebase';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { UserPlus, User, Mail, Lock, ArrowRight, Loader2, Phone } from 'lucide-react';
+import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { UserPlus, User, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getConfiguredAdminEmail } from '../../lib/adminConfig';
 
@@ -11,7 +11,6 @@ export function Register() {
   const { settings } = useSettingsStore();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -31,27 +30,8 @@ export function Register() {
 
       if (!auth) throw new Error('Firebase Auth is not initialized');
 
-      const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
-      if (!cleanPhone) {
-        throw new Error('মোবাইল নাম্বার দেওয়া আবশ্যক। নম্বর ছাড়া অ্যাকাউন্ট তৈরি করা যাবে না।');
-      }
-      
-      const bdPhoneRegex = /^(?:\+?88)?01[3-9]\d{8}$/;
-      if (!bdPhoneRegex.test(cleanPhone)) {
-        throw new Error('দয়া করে সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)। নম্বর ছাড়া অ্যাকাউন্ট তৈরি করা যাবে না।');
-      }
-
-      if (typeof window !== 'undefined' && cleanPhone) {
-        localStorage.setItem(`verified_phone_${email.trim().toLowerCase()}`, cleanPhone);
-      }
-
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
-      
-      if (typeof window !== 'undefined' && cleanPhone) {
-        localStorage.setItem(`verified_phone_${user.uid}`, cleanPhone);
-        localStorage.setItem(`verified_phone_${email.trim().toLowerCase()}`, cleanPhone);
-      }
       
       await updateProfile(user, {
         displayName: name.trim()
@@ -70,12 +50,11 @@ export function Register() {
           }
         } catch (err) {}
       }
-      // Upsert user in Supabase with verified phone number immediately
+      // Upsert user in Supabase
       const { error: insertError } = await supabase.from('users').upsert([{
         id: user.uid,
         name: name.trim(),
         email: email.trim().toLowerCase(),
-        phone: cleanPhone,
         role: isAdmin ? 'admin' : 'user',
         status: 'active',
         created_at: Date.now()
@@ -207,35 +186,6 @@ export function Register() {
               </div>
               
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-bold text-gray-300" htmlFor="phone">
-                    মোবাইল নাম্বার <span className="text-red-500">*</span>
-                  </label>
-                  <span className="text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                    সঠিক নম্বর দিন, কোড পাঠানো হবে
-                  </span>
-                </div>
-                <div className="relative">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-500">
-                    <Phone className="h-5 w-5" />
-                  </div>
-                  <input
-                    id="phone"
-                    name="phone"
-                    type="tel"
-                    required
-                    className="block w-full rounded-xl border border-white/10 bg-white/5 py-3.5 pl-12 pr-4 text-white placeholder-gray-500 transition-all focus:border-red-500 focus:bg-black/50 focus:outline-none focus:ring-1 focus:ring-red-500"
-                    placeholder="01XXXXXXXXX"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                </div>
-                <p className="mt-1.5 text-[11px] text-zinc-400">
-                  সঠিক নম্বর দিন, কোড পাঠানো হবে। নম্বর ছাড়া অ্যাকাউন্ট সচল হবে না।
-                </p>
-              </div>
-              
-              <div>
                 <label className="mb-2 block text-sm font-bold text-gray-300" htmlFor="password">
                   Password
                 </label>
@@ -274,6 +224,43 @@ export function Register() {
                   <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
                 </>
               )}
+            </button>
+
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-white/10" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-[#0a0a0a] px-2 text-gray-500">অথবা</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                setIsLoading(true);
+                setError('');
+                try {
+                  if (!auth) throw new Error('Firebase Auth is not initialized');
+                  const provider = new GoogleAuthProvider();
+                  await signInWithPopup(auth, provider);
+                  navigate('/');
+                } catch (err: any) {
+                  setError(err.message || 'Google সাইন-আপ ব্যর্থ হয়েছে। আবার চেষ্টা করুন।');
+                } finally {
+                  setIsLoading(false);
+                }
+              }}
+              disabled={isLoading}
+              className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-white/15 bg-white/5 py-3.5 px-4 text-sm font-bold text-white transition-all hover:bg-white/10 disabled:opacity-50"
+            >
+              <svg className="h-5 w-5" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+              </svg>
+              Google দিয়ে অ্যাকাউন্ট খুলুন
             </button>
           </form>
           
